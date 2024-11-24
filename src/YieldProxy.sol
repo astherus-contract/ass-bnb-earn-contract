@@ -62,8 +62,8 @@ contract YieldProxy is
   /* ======================
             Events
    ====================== */
-  event ActivityAdded(uint256 _startTime, uint256 _endTime, uint256 _rewardedTime, string _tokenName);
-  event ActivitySettled(uint256 _rewardedTime, string _tokenName);
+  event ActivityAdded(uint256 startTime, uint256 endTime, uint256 rewardedTime, string tokenName);
+  event ActivitySettled(uint256 rewardedTime, uint256 compoundedAmount, string tokenName);
   event Received(address indexed sender, uint256 value);
   event MinterSet(address indexed oldMinter, address indexed newMinter);
   event SlisBNBProviderSet(address indexed oldSlisBNBProvider, address indexed newSlisBNBProvider);
@@ -160,7 +160,6 @@ contract YieldProxy is
    */
   function withdraw(uint256 amount) external override onlyRole(MINTER) nonReentrant whenNotPaused {
     require(slisBNBProvider != address(0), "slisBNBProvider not set");
-    require(address(minter) != address(0), "Minter not set");
     require(amount > 0, "Invalid amount");
     // pre balance of slisBNB
     uint256 preBalance = token.balanceOf(address(this));
@@ -203,11 +202,10 @@ contract YieldProxy is
     // compound rewards
     token.safeIncreaseAllowance(address(minter), netBalance);
     minter.compoundRewards(netBalance);
-
+    // emit event
+    emit ActivitySettled(block.timestamp, rewardedAmount, activities[lastUpdatedActivityIdx - 1].tokenName);
     // reset the rewarded amount
     rewardedAmount = 0;
-    // emit event
-    emit ActivitySettled(block.timestamp, activities[lastUpdatedActivityIdx - 1].tokenName);
   }
 
   /**
@@ -282,7 +280,8 @@ contract YieldProxy is
       }
       activities[i].rewardedTime = block.timestamp;
       idx = i;
-      emit ActivitySettled(block.timestamp, activities[idx].tokenName);
+      // emit event, note that no reward is compounded
+      emit ActivitySettled(block.timestamp, 0, activities[idx].tokenName);
     }
     lastUpdatedActivityIdx = idx;
   }
