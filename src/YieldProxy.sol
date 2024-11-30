@@ -72,6 +72,11 @@ contract YieldProxy is
   event TokenDelegated(address indexed sender, uint256 amount, uint256 lpAmount);
   event NativeTokensWithdrawn(address indexed sender, uint256 amount);
 
+  /// @custom:oz-upgrades-unsafe-allow constructor
+  constructor() {
+    _disableInitializers();
+  }
+
   /**
    * @dev initialize the contract
    * @param _admin - Address of the admin
