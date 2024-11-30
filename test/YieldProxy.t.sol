@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Upgrades } from "openzeppelin-foundry-upgrades/Upgrades.sol";
@@ -31,6 +31,7 @@ contract YieldProxyTest is Test {
   address rewardSender = makeAddr("REWARD_SENDER");
   address feeReceiver = makeAddr("FEE_RECEIVER");
   address fatFinger = makeAddr("FAT_FINGER");
+  address MPCWallet = makeAddr("MPC_WALLET");
 
   YieldProxy yieldProxy;
   AsBnbMinter minter;
@@ -76,7 +77,7 @@ contract YieldProxyTest is Test {
     vm.startPrank(manager);
     yieldProxy.setMinter(address(minter));
     yieldProxy.setSlisBNBProvider(address(slisBNBProvider));
-    yieldProxy.setMPCWallet(address(yieldProxy));
+    yieldProxy.setMPCWallet(MPCWallet);
     yieldProxy.setRewardsSender(rewardSender);
     vm.stopPrank();
 

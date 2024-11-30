@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -113,6 +113,8 @@ contract AsBnbMinter is
 
     __Pausable_init();
     __ReentrancyGuard_init();
+    __AccessControl_init();
+    __UUPSUpgradeable_init();
 
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(MANAGER, _manager);
@@ -163,7 +165,7 @@ contract AsBnbMinter is
   }
 
   /**
-   * @dev burn asBnb - only yieldProxy can call this function
+   * @dev burn asBnb
    * @param amountToBurn - amount of asBnb to burn
    */
   function burnAsBnb(uint256 amountToBurn) external override whenNotPaused nonReentrant returns (uint256) {
@@ -312,7 +314,7 @@ contract AsBnbMinter is
   function _mint(uint256 amountIn) private returns (uint256) {
     require(amountIn >= minMintAmount, "amount is less than minMintAmount");
     // transfer token to YieldProxy
-    token.transferFrom(msg.sender, address(this), amountIn);
+    token.safeTransferFrom(msg.sender, address(this), amountIn);
     token.safeIncreaseAllowance(yieldProxy, amountIn);
     IYieldProxy(yieldProxy).deposit(amountIn);
 

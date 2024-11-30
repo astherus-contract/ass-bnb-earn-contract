@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -103,6 +103,8 @@ contract YieldProxy is
 
     __Pausable_init();
     __ReentrancyGuard_init();
+    __AccessControl_init();
+    __UUPSUpgradeable_init();
 
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(MANAGER, _manager);
@@ -121,15 +123,18 @@ contract YieldProxy is
   ============================ */
   /**
    * @dev check if there is any activity ongoing
-   *      if the last activity is not rewarded yet, then it is ongoing
+   *      to save gas, searching from `lastUpdatedActivityIdx`
+   *      as activities before that are already settled
    */
   function activitiesOnGoing() external view override returns (bool) {
-    if (activities.length == 0) {
-      return false;
+    for (uint256 i = lastUpdatedActivityIdx; i < activities.length; ++i) {
+      Activity memory activity = activities[i];
+      // if it's started and not rewarded yet
+      if (activity.startTime <= block.timestamp && activity.rewardedTime == 0) {
+        return true;
+      }
     }
-    return
-      activities[activities.length - 1].startTime <= block.timestamp &&
-      activities[activities.length - 1].rewardedTime == 0;
+    return false;
   }
 
   /* ============================
@@ -271,19 +276,18 @@ contract YieldProxy is
   function endActivity(uint256 numberOfActivity) external onlyRole(MANAGER) whenNotPaused {
     require(numberOfActivity > 0, "Invalid number of activities");
     require(this.activitiesOnGoing(), "No active activity");
-    uint256 idx = lastUpdatedActivityIdx;
     // starting from lastUpdatedActivityIdx
-    for (uint256 i = idx; i < (lastUpdatedActivityIdx + numberOfActivity); i++) {
+    for (uint256 i = lastUpdatedActivityIdx; i < (lastUpdatedActivityIdx + numberOfActivity); ++i) {
       // break if reach to the end
       if (i >= activities.length) {
         break;
       }
       activities[i].rewardedTime = block.timestamp;
-      idx = i;
       // emit event, note that no reward is compounded
-      emit ActivitySettled(block.timestamp, 0, activities[idx].tokenName);
+      emit ActivitySettled(block.timestamp, 0, activities[lastUpdatedActivityIdx].tokenName);
+      // update last updated activity index
+      ++lastUpdatedActivityIdx;
     }
-    lastUpdatedActivityIdx = idx;
   }
 
   /**

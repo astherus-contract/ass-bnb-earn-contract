@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/governance/TimelockController.sol";
+import "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 
-contract Timelock is TimelockController {
+contract Timelock is TimelockController, AccessControlEnumerable {
   event MaxDelayChanged(uint256 oldValue, uint256 newValue);
 
   uint256 public MAX_DELAY;
@@ -17,6 +18,8 @@ contract Timelock is TimelockController {
   ) TimelockController(minDelay, proposers, executors, address(0)) {
     require(maxDelay > minDelay + 3600, "illegal maxDelay");
     MAX_DELAY = maxDelay;
+    _grantRole(PROPOSER_ROLE, address(this));
+    _grantRole(EXECUTOR_ROLE, address(this));
   }
 
   function setMaxDelay(uint256 maxDelay) external {
@@ -35,6 +38,26 @@ contract Timelock is TimelockController {
     } else {
       return timestamp;
     }
+  }
+
+  function supportsInterface(
+    bytes4 interfaceId
+  ) public view virtual override(TimelockController, AccessControlEnumerable) returns (bool) {
+    return TimelockController.supportsInterface(interfaceId) || AccessControlEnumerable.supportsInterface(interfaceId);
+  }
+
+  function _revokeRole(
+    bytes32 role,
+    address account
+  ) internal virtual override(AccessControl, AccessControlEnumerable) returns (bool) {
+    return AccessControlEnumerable._revokeRole(role, account);
+  }
+
+  function _grantRole(
+    bytes32 role,
+    address account
+  ) internal virtual override(AccessControl, AccessControlEnumerable) returns (bool) {
+    return AccessControlEnumerable._grantRole(role, account);
   }
 
   function scheduleTask(

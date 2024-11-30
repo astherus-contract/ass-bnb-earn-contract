@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 /// @title YieldProxy Proxy Contract interface
 /// @notice Using for other protocols proxy call, for example: PancakeSwap, StakeDAO and etc.
