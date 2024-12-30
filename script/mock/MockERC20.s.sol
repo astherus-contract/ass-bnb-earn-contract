@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import "forge-std/Script.sol";
-import {MockERC20} from "../../src/mock/MockERC20.sol";
+import { MockERC20 } from "../../src/mock/MockERC20.sol";
 
 contract MockERC20Script is Script {
   // add this to be excluded from coverage report

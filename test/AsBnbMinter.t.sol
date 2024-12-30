@@ -7,19 +7,30 @@ import { AsBnbMinter } from "../src/AsBnbMinter.sol";
 import { IAsBnbMinter } from "../src/interfaces/IAsBnbMinter.sol";
 import { YieldProxy } from "../src/YieldProxy.sol";
 import { IYieldProxy } from "../src/interfaces/IYieldProxy.sol";
+import { AsBnbOFTAdapter } from "../src/oft/AsBnbOFTAdapter.sol";
+import { TransferLimiter } from "../src/oft/TransferLimiter.sol";
 import { AsBNB } from "../src/AsBNB.sol";
 import { MockERC20 } from "../src/mock/MockERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { IOFT, SendParam, OFTReceipt } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import { MessagingFee, MessagingReceipt } from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
 
 import { IListaStakeManager } from "../src/interfaces/IListaStakeManager.sol";
 import { ISlisBNBProvider } from "../src/interfaces/ISlisBNBProvider.sol";
+import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 
 // Run this command to test:
 // forge clean && forge build && forge test -vvv --match-contract AsBnbMinterTest
 // if you want to run specific test, you can add `--match-function flag` as well
 
+interface IStakeManagerAlt {
+  function convertBnbToSnBnb(uint256 _amount) external view returns (uint256);
+}
+
 contract AsBnbMinterTest is Test {
+  using OptionsBuilder for bytes;
   using SafeERC20 for IERC20;
   using SafeERC20 for AsBNB;
 
@@ -36,12 +47,16 @@ contract AsBnbMinterTest is Test {
   YieldProxy yieldProxy;
   AsBnbMinter minter;
   AsBNB asBnb;
+  AsBnbOFTAdapter asBnbOFTAdapter;
   // slisBNB
   IERC20 token = IERC20(0xCc752dC4ae72386986d011c2B485be0DAd98C744);
   // StakeManager - BNB <> slisBNB
   IListaStakeManager listaStakeManager = IListaStakeManager(0xc695F964011a5a1024931E2AF0116afBaC41B31B);
   // slisBNBProvider - slisBNB <> clisBNB
   ISlisBNBProvider slisBNBProvider = ISlisBNBProvider(0x11f6aDcb73473FD7bdd15f32df65Fa3ECdD0Bc20);
+  // Sei Chain
+  address LZ_Endpoint = 0x6EDCE65403992e310A62460808c4b910D972f10f;
+  uint32 SEI_EID = 40258;
 
   // min. amount to mint
   uint256 minMintAmount = 0.001 ether;
@@ -71,6 +86,21 @@ contract AsBnbMinterTest is Test {
     );
     minter = AsBnbMinter(minterProxy);
 
+    // deploy AsBNB OFT Adapter ------------
+    // deploy impl.
+    AsBnbOFTAdapter asBnbOFTAdapterImpl = new AsBnbOFTAdapter(address(asBnb), LZ_Endpoint);
+    // Encode initialization call
+    bytes memory asBnbOFTAdapterInitData = abi.encodeWithSignature(
+      "initialize(address,address,address,address)",
+      admin,
+      manager,
+      pauser,
+      admin
+    );
+    // deploy proxy
+    ERC1967Proxy asBnbOFTAdapterProxy = new ERC1967Proxy(address(asBnbOFTAdapterImpl), asBnbOFTAdapterInitData);
+    asBnbOFTAdapter = AsBnbOFTAdapter(address(asBnbOFTAdapterProxy));
+
     // set roles
     vm.startPrank(admin);
     asBnb.setMinter(address(minter));
@@ -82,7 +112,17 @@ contract AsBnbMinterTest is Test {
     yieldProxy.setMPCWallet(MPCWallet);
     yieldProxy.setRewardsSender(rewardSender);
     minter.setMinMintAmount(minMintAmount);
+    minter.setAsBnbOFTAdapter(SEI_EID, address(asBnbOFTAdapter));
     vm.stopPrank();
+
+    // set peer and transfer limit
+    vm.prank(admin);
+    asBnbOFTAdapter.setPeer(SEI_EID, bytes32(uint256(uint160(makeAddr("OFT_AT_SEI")))));
+
+    TransferLimiter.TransferLimit[] memory tlb = new TransferLimiter.TransferLimit[](1);
+    tlb[0] = TransferLimiter.TransferLimit(SEI_EID, 100000 ether, 10000 ether, 0.01 ether, 20000 ether, 100);
+    vm.prank(manager);
+    asBnbOFTAdapter.setTransferLimitConfigs(tlb);
 
     // give all roles some BNB
     deal(admin, 100000 ether);
@@ -112,7 +152,22 @@ contract AsBnbMinterTest is Test {
     token.safeIncreaseAllowance(address(minter), minMintAmount - 1);
     vm.expectRevert("amount is less than minMintAmount");
     minter.mintAsBnb(minMintAmount - 1);
+    vm.stopPrank();
 
+    // disable deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+    assertEq(minter.canDeposit(), false);
+    token.safeIncreaseAllowance(address(minter), userTokenBalance);
+    vm.prank(user);
+    vm.expectRevert("Deposit is disabled");
+    minter.mintAsBnb(userTokenBalance);
+
+    // resume deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+
+    vm.startPrank(user);
     // user mint asBnb
     token.safeIncreaseAllowance(address(minter), userTokenBalance);
     minter.mintAsBnb(userTokenBalance);
@@ -129,6 +184,143 @@ contract AsBnbMinterTest is Test {
     minter.mintAsBnb(userTokenBalance);
 
     vm.stopPrank();
+  }
+
+  /**
+   * @dev similar with the previous scenario
+   *      instead of depositing slisBNB,
+   *      user directly mint asBnb from their native token
+   */
+  function test_mint_asBnb_from_native_token() public {
+    vm.startPrank(user);
+
+    // try to mint less then minMintAmount
+    vm.expectRevert("amount is less than minMintAmount");
+    minter.mintAsBnb{ value: minMintAmount - 1 }();
+    vm.stopPrank();
+
+    // disable deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+    assertEq(minter.canDeposit(), false);
+    vm.prank(user);
+    vm.expectRevert("Deposit is disabled");
+    minter.mintAsBnb{ value: 1 ether }();
+
+    // resume deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+
+    vm.startPrank(user);
+    // user mint asBnb
+    minter.mintAsBnb{ value: 1 ether }();
+
+    // verify asBnb balance
+    uint256 conversionRate1 = IStakeManagerAlt(address(listaStakeManager)).convertBnbToSnBnb(1 ether);
+    uint256 conversionRate2 = minter.convertToAsBnb(1 ether);
+    assertLe(asBnb.balanceOf(user), 1 ether * conversionRate1 * conversionRate2);
+    console.log("user AsBNB balance: %s", asBnb.balanceOf(user));
+
+    vm.stopPrank();
+  }
+
+  /**
+   * @dev User convert their BNB to slisBNB, and mint asBNB to SEI chain
+   */
+  function test_mint_asBnb_to_sei() public {
+    deal(address(token), user, 1 ether);
+
+    // get est. amount to cross-chain
+    uint256 crossChainAmt = minter.convertToAsBnb(1 ether);
+
+    // disable deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+    assertEq(minter.canDeposit(), false);
+    token.safeIncreaseAllowance(address(minter), crossChainAmt);
+
+    uint256 _rate = asBnbOFTAdapter.decimalConversionRate();
+    crossChainAmt = (crossChainAmt / _rate) * _rate;
+
+    // quote fee
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+    SendParam memory sendParam = SendParam(
+      SEI_EID,
+      addressToBytes32(user),
+      crossChainAmt,
+      crossChainAmt,
+      options,
+      "",
+      ""
+    );
+    MessagingFee memory fee = asBnbOFTAdapter.quoteSend(sendParam, false);
+    // mint asBnb and send to SEI chain
+    vm.prank(user);
+    vm.expectRevert("Deposit is disabled");
+    minter.mintAsBnbToChain{ value: fee.nativeFee }(crossChainAmt, sendParam);
+
+    // resume deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+
+    vm.startPrank(user);
+    // user mint asBnb
+    token.safeIncreaseAllowance(address(minter), crossChainAmt);
+    minter.mintAsBnbToChain{ value: fee.nativeFee }(crossChainAmt, sendParam);
+
+    // verify asBnb balance
+    uint256 convertRate = minter.convertToAsBnb(crossChainAmt);
+    assertLe(asBnb.balanceOf(user), crossChainAmt * convertRate);
+    assertLe(minter.totalTokens(), crossChainAmt);
+    console.log("user AsBNB balance: %s", asBnb.balanceOf(user));
+
+    vm.stopPrank();
+  }
+
+  /**
+   * @dev similar with the previous scenario, mint asBNB to SEI with native BNB
+   */
+  function test_mint_asBnb_to_sei_from_native_token() public {
+    // get est. mint token
+    uint256 tokenGet = IStakeManagerAlt(address(listaStakeManager)).convertBnbToSnBnb(1 ether);
+    uint256 asTokenToMintEst = minter.convertToAsBnb(tokenGet);
+
+    // quote fee
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+    // remove dust
+    uint256 _rate = asBnbOFTAdapter.decimalConversionRate();
+    asTokenToMintEst = (asTokenToMintEst / _rate) * _rate;
+
+    SendParam memory sendParam = SendParam(
+      SEI_EID,
+      addressToBytes32(user),
+      asTokenToMintEst,
+      asTokenToMintEst,
+      options,
+      "",
+      ""
+    );
+    MessagingFee memory fee = asBnbOFTAdapter.quoteSend(sendParam, false);
+
+    console.log("asTokenToMintEst: %s", asTokenToMintEst);
+    console.log("OFT Adapter address: %s", address(asBnbOFTAdapter));
+    console.log("Minter address: %s", address(minter));
+
+    // disable deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+    assertEq(minter.canDeposit(), false);
+    vm.prank(user);
+    vm.expectRevert("Deposit is disabled");
+    minter.mintAsBnbToChain{ value: 1 ether + fee.nativeFee }(sendParam);
+
+    // resume deposit
+    vm.prank(manager);
+    minter.toggleCanDeposit();
+
+    vm.prank(user);
+    // user mint asBnb
+    minter.mintAsBnbToChain{ value: 1 ether + fee.nativeFee }(sendParam);
   }
 
   /**
@@ -211,6 +403,22 @@ contract AsBnbMinterTest is Test {
     uint256 amountToBurn = 50 ether;
     uint256 amountToRelease = minter.convertToTokens(amountToBurn);
     uint256 preBalance = token.balanceOf(user);
+
+    // disable withdrawal
+    vm.prank(manager);
+    minter.toggleCanWithdraw();
+    assertEq(minter.canWithdraw(), false);
+
+    // can't withdraw
+    vm.startPrank(user);
+    vm.expectRevert("Withdrawal is disabled");
+    minter.burnAsBnb(amountToBurn);
+    vm.stopPrank();
+
+    // resume withdrawal
+    vm.prank(manager);
+    minter.toggleCanWithdraw();
+    assertEq(minter.canWithdraw(), true);
 
     // burn asBnb
     vm.startPrank(user);
@@ -365,5 +573,9 @@ contract AsBnbMinterTest is Test {
     vm.stopPrank();
     console.log("implAddressV1: %s", implAddressV1);
     console.log("implAddressV2: %s", implAddressV2);
+  }
+
+  function addressToBytes32(address _addr) internal pure returns (bytes32) {
+    return bytes32(uint256(uint160(_addr)));
   }
 }

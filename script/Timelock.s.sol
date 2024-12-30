@@ -19,8 +19,11 @@ contract TimelockScript is Script {
     address[] memory executors = new address[](1);
     executors[0] = deployer;
 
+    uint256 minDelay = 6 hours;
+    uint256 maxDelay = 48 hours;
+
     vm.startBroadcast(deployerPK);
-    Timelock timelock = new Timelock(1 days, 30 days, proposers, executors);
+    Timelock timelock = new Timelock(minDelay, maxDelay, proposers, executors);
     vm.stopBroadcast();
     console.log("Timelock address: %s", address(timelock));
   }
