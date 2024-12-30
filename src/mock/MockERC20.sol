@@ -17,5 +17,4 @@ contract MockERC20 is ERC20, ERC20Permit {
   function burn(address from, uint256 amount) external {
     _burn(from, amount);
   }
-
 }

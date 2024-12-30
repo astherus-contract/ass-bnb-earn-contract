@@ -280,9 +280,10 @@ contract YieldProxy is
    */
   function endActivity(uint256 numberOfActivity) external onlyRole(MANAGER) whenNotPaused {
     require(numberOfActivity > 0, "Invalid number of activities");
-    require(this.activitiesOnGoing(), "No active activity");
+    // cache the last updated activity index
+    uint256 max = lastUpdatedActivityIdx + numberOfActivity;
     // starting from lastUpdatedActivityIdx
-    for (uint256 i = lastUpdatedActivityIdx; i < (lastUpdatedActivityIdx + numberOfActivity); ++i) {
+    for (uint256 i = lastUpdatedActivityIdx; i < max; ++i) {
       // break if reach to the end
       if (i >= activities.length) {
         break;
@@ -313,7 +314,10 @@ contract YieldProxy is
     require(slisBNBProvider != address(0), "slisBNBProvider not set");
     require(mpcWallet != address(0), "mpcWallet not set");
     uint256 balance = token.balanceOf(address(this));
-    ISlisBNBProvider(slisBNBProvider).provide(balance, mpcWallet);
+    if (balance > 0) {
+      token.safeIncreaseAllowance(slisBNBProvider, balance);
+      ISlisBNBProvider(slisBNBProvider).provide(balance, mpcWallet);
+    }
   }
 
   /**
