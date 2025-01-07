@@ -246,7 +246,7 @@ contract AsBnbMinter is
   ) external payable override whenNotPaused depositEnabled nonReentrant returns (uint256) {
     // get cross chain fee and validate the existence of OFTAdapter
     MessagingFee memory fee = getCrossChainFee(sendParam);
-    require(msg.value >= fee.nativeFee, "Invalid fee");
+    require(msg.value == fee.nativeFee, "Invalid fee");
     // transfer token from user to this contract
     token.safeTransferFrom(msg.sender, address(this), amountIn);
 

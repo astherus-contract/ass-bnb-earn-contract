@@ -297,17 +297,6 @@ contract YieldProxy is
   }
 
   /**
-   * @dev Delegate all tokens to a new MPC Wallet
-   * @notice When Lista has announced in advance that the MPC wallet will be changed,
-   *         manager(multi-sig) can call this function to delegate all tokens to the new MPC wallet
-   */
-  function reDelegateTokens() external onlyRole(MANAGER) whenNotPaused {
-    require(slisBNBProvider != address(0), "slisBNBProvider not set");
-    require(mpcWallet != address(0), "mpcWallet not set");
-    ISlisBNBProvider(slisBNBProvider).delegateAllTo(mpcWallet);
-  }
-
-  /**
    * @dev convert all slisBNB to clisBNB
    */
   function convertAllSlisBNBToClisBNB() external onlyRole(MANAGER) whenNotPaused {
@@ -338,7 +327,10 @@ contract YieldProxy is
   function setMPCWallet(address _mpcWallet) external onlyRole(MANAGER) {
     require(_mpcWallet != address(0) && _mpcWallet != mpcWallet, "Invalid MPC wallet address");
     address oldMpcWallet = mpcWallet;
+    // update mpc wallet
     mpcWallet = _mpcWallet;
+    // delegate all to the new MPC wallet right after it's updated
+    ISlisBNBProvider(slisBNBProvider).delegateAllTo(mpcWallet);
     emit MPCWalletSet(oldMpcWallet, _mpcWallet);
   }
 

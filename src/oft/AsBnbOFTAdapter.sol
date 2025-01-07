@@ -42,6 +42,11 @@ contract AsBnbOFTAdapter is
     address _pauser,
     address _delegate
   ) external initializer {
+    require(_admin != address(0), "Invalid admin address");
+    require(_manager != address(0), "Invalid manager address");
+    require(_pauser != address(0), "Invalid pauser address");
+    require(_delegate != address(0), "Invalid delegate address");
+
     __OFTAdapter_init(_delegate);
     __Ownable_init(_admin);
     __AccessControl_init();
